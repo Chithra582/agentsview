@@ -2216,7 +2216,40 @@ schemas keep their existing ordering behavior.
   model identity, and sometimes `usage.cost.total`. Agentsview intentionally
   ignores the reported cost and catalog-prices normalized token fields to keep
   pricing attribution consistent.
-- **Agentsview:** `internal/parser/openclaw.go`.
+- **SQLite layout:** OpenClaw 2026.9.5 also stores each agent's transcript in
+  `agent/openclaw-agent.sqlite`. Agentsview reads the ordered
+  `transcript_events(session_id, seq, event_json, created_at)` rows and sends
+  the event JSON through the same decoder as JSONL. This layout was measured
+  on 2026-09-22; a database missing required columns is reported as
+  unsupported.
+- **Agentsview:** `internal/parser/openclaw.go` and
+  `internal/parser/openclaw_sqlite.go`.
+- **Source selection (rechecked 2026-09-27):** Isolated duplicate-file fixtures
+  verify that discovery and session-ID lookup select the same legacy copy
+  across configured roots: live files before archives, then the newer copy.
+  Changed-file sync also checks file timestamps and breaks ties by path, so an
+  older or equally dated lower-ranked duplicate cannot replace the preferred
+  copy's saved messages. Explicit stored-source requests retain their existing
+  preference. A stored hint cannot override a requested session ID. Legacy
+  streaming discovery yields candidates as directories are read; collecting
+  discovery and reconciliation still select the preferred copy.
+- **Legacy JSONL retention (rechecked 2026-09-27):** Sync keeps archived
+  messages when the same file parses to fewer messages than were saved. A
+  newer, different copy can still replace the saved transcript. A shorter
+  reset at the same path is treated as incomplete history too.
+- **SQLite freshness (rechecked 2026-09-27):** Isolated fixtures with 2 and 50
+  sessions verify that appending to one member syncs only that member.
+  Discovery carries each member's content size, latest event time, and hash.
+  It still scans event payloads once per discovery to detect edits and
+  deletions that leave event timestamps unchanged. Quick sync retains SQLite
+  members through timestamp filtering and compares their fingerprints, so old
+  event times cannot hide changed content. Unchanged members still skip
+  parsing and writes.
+- **SQLite retention:** While configured roots and remote-path mappings still
+  identify the stored SQLite source, a JSONL copy cannot replace it, even if
+  the database disappears. Returning to a JSONL-writing OpenClaw version then
+  leaves that session at its last SQLite snapshot; later JSONL messages for
+  the same ID are not imported.
 
 ## QClaw (`qclaw`)
 

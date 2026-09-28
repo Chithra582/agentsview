@@ -6240,7 +6240,7 @@ func (e *Engine) reconciliationCandidate(ctx context.Context,
 		if statPath == path {
 			preference1 = 1
 		}
-	} else if !claudeFormat && !isCodexFormatAgent(agent) {
+	} else if !claudeFormat && !isCodexFormatAgent(agent) && agent != parser.AgentOpenClaw {
 		preference1 = configuredRootPreference(statPath, roots)
 	}
 	if ranker, ok := provider.(parser.ReconciliationSourceRanker); ok {
@@ -6628,23 +6628,37 @@ func sameReconciliationSourcePath(left, right string) bool {
 // member gone from its own container, but the same logical member may have
 // moved to another configured root the pass never streamed; a deletion
 // claimed here would outlive the move until that root happens to sync. The
-// lookup passes only the session identity — a stored-path probe could
-// resolve the stale spelling without verifying the row exists.
-func reconciliationMemberRelocated(
-	ctx context.Context, provider parser.Provider, fullSessionID string,
+// The lookup uses the session identity and compares any result with the
+// archived source path before treating it as a move.
+func (e *Engine) reconciliationMemberRelocated(
+	ctx context.Context,
+	provider parser.Provider,
+	fullSessionID, storedPath string,
 ) (bool, error) {
 	if provider == nil {
 		// Without a provider the move cannot be ruled out; report the member
 		// as possibly relocated so deletion is withheld.
 		return true, nil
 	}
-	_, found, err := provider.FindSource(ctx, parser.FindSourceRequest{
+	source, found, err := provider.FindSource(ctx, parser.FindSourceRequest{
 		FullSessionID: fullSessionID,
 	})
 	if err != nil {
 		return false, fmt.Errorf(
 			"resolve possibly relocated member %s: %w", fullSessionID, err,
 		)
+	}
+	if !found {
+		return false, nil
+	}
+	lowerRanked, err := e.storedSourceRanksHigher(
+		ctx, provider, storedPath, source,
+	)
+	if err != nil {
+		return false, err
+	}
+	if lowerRanked {
+		return false, nil
 	}
 	return found, nil
 }
@@ -7049,8 +7063,8 @@ func (e *Engine) tombstoneMissingWatchSourceScopesLocked(
 								// container proof; a same-ID copy under another
 								// configured root would make this a move, not a
 								// deletion.
-								relocated, err := reconciliationMemberRelocated(
-									ctx, provider, ownership.ID,
+								relocated, err := e.reconciliationMemberRelocated(
+									ctx, provider, ownership.ID, ownership.FilePath,
 								)
 								if err != nil {
 									return deleted, err
@@ -7275,8 +7289,8 @@ func (e *Engine) tombstoneMissingWatchSourceScopesLocked(
 							if _, _, virtual := parser.ParseVirtualSourcePath(
 								ownership.FilePath,
 							); virtual {
-								relocated, err := reconciliationMemberRelocated(
-									ctx, provider, ownership.ID,
+								relocated, err := e.reconciliationMemberRelocated(
+									ctx, provider, ownership.ID, ownership.FilePath,
 								)
 								if err != nil {
 									return deleted, err
@@ -8500,6 +8514,15 @@ func (e *Engine) filterFilesByMtime(
 		if f.ForceParse {
 			out = append(out, f)
 			continue
+		}
+		if f.Agent == parser.AgentOpenClaw {
+			if _, _, member := parser.ParseVirtualSourcePathForBase(f.Path, "openclaw-agent.sqlite"); member {
+				// Edits and deletions need not advance event timestamps.
+				// Discovery already computed each member's fingerprint;
+				// let normal freshness checks skip unchanged members.
+				out = append(out, f)
+				continue
+			}
 		}
 		mtime, err := e.discoveredFileEffectiveMtime(ctx, f)
 		if err != nil {
@@ -12222,6 +12245,20 @@ func (e *Engine) processProviderFile(
 		}
 	}
 
+	// Unchanged sources cannot replace the preferred copy, so resolve its
+	// rank only after the freshness gates have declined.
+	if lowerRanked, err := e.providerSourceLowerRanked(
+		ctx, provider, file.Agent, source,
+	); err != nil {
+		return processResult{
+			err: fmt.Errorf("rank %s source %s: %w", file.Agent, providerDiscoveredPath(source), err),
+		}, true
+	} else if lowerRanked {
+		return processResult{
+			skip: true, suppressPresenceSweep: true,
+		}, true
+	}
+
 	// Provider parse seam: every gate above returns a lease-free skip. From
 	// here the provider parses the source, so acquire the retention lease that
 	// bounds the parsed payload and attach it to every result carrying that
@@ -13590,6 +13627,81 @@ func providerOutcomeAllowsCleanSkipCache(outcome parser.ParseOutcome) bool {
 		}
 	}
 	return true
+}
+
+func reconciliationMemberIdentity(
+	agent parser.AgentType, source parser.SourceRef,
+) string {
+	if source.ReconciliationIdentity != "" {
+		return source.ReconciliationIdentity
+	}
+	return reconciliationSourceIdentity(agent, source)
+}
+
+func reconciliationSourceRankLower(
+	candidate, stored parser.ReconciliationSourceRank,
+) bool {
+	if candidate.Class != stored.Class {
+		return candidate.Class < stored.Class
+	}
+	if candidate.Recency != stored.Recency {
+		return candidate.Recency < stored.Recency
+	}
+	return candidate.Path > stored.Path
+}
+
+func (e *Engine) storedSourceRanksHigher(
+	ctx context.Context,
+	provider parser.Provider,
+	storedPath string,
+	candidate parser.SourceRef,
+) (bool, error) {
+	resolver, resolves := provider.(parser.ReconciliationSourceResolver)
+	ranker, ranks := provider.(parser.ReconciliationSourceRanker)
+	if !resolves || !ranks || storedPath == "" {
+		return false, nil
+	}
+	if e.pathRewriter != nil {
+		if e.storedPathResolver == nil {
+			return false, nil
+		}
+		resolvedPath, ok := e.storedPathResolver(storedPath)
+		if !ok || resolvedPath == "" {
+			return false, nil
+		}
+		storedPath = resolvedPath
+	}
+	stored, found, err := resolver.SourceForReconciliation(
+		ctx, storedPath, candidate.ProjectHint,
+	)
+	if err != nil || !found {
+		return false, err
+	}
+	return reconciliationSourceRankLower(
+		ranker.ReconciliationSourceRank(candidate),
+		ranker.ReconciliationSourceRank(stored),
+	), nil
+}
+
+func (e *Engine) providerSourceLowerRanked(
+	ctx context.Context,
+	provider parser.Provider,
+	agent parser.AgentType,
+	candidate parser.SourceRef,
+) (bool, error) {
+	if _, ok := provider.(parser.ReconciliationSourceRanker); !ok {
+		return false, nil
+	}
+	identity := reconciliationMemberIdentity(agent, candidate)
+	if identity == "" {
+		return false, nil
+	}
+	fullSessionID := applyIDPrefixToID(
+		provider.Definition().IDPrefix, identity,
+	)
+	fullSessionID = applyIDPrefixToID(e.idPrefix, fullSessionID)
+	storedPath := e.db.GetSessionFilePath(ctx, fullSessionID)
+	return e.storedSourceRanksHigher(ctx, provider, storedPath, candidate)
 }
 
 func (e *Engine) providerSourceForDiscoveredFile(
@@ -15340,6 +15452,18 @@ func (e *Engine) tryProviderIncrementalAppend(
 	if provider.Capabilities().Source.IncrementalAppend !=
 		parser.CapabilitySupported {
 		return processResult{}, false
+	}
+	// Incremental appends can write before the full-parse rank gate.
+	if lowerRanked, err := e.providerSourceLowerRanked(
+		ctx, provider, file.Agent, source,
+	); err != nil {
+		return processResult{
+			err: fmt.Errorf("rank %s source %s: %w", file.Agent, providerDiscoveredPath(source), err),
+		}, true
+	} else if lowerRanked {
+		return processResult{
+			skip: true, suppressPresenceSweep: true,
+		}, true
 	}
 	path := providerDiscoveredPath(source)
 	if path == "" {
@@ -17695,6 +17819,27 @@ func (e *Engine) reconcileProviderHistoryContext(
 	}
 	var prior *ingest.PriorSession
 	switch agent {
+	case parser.AgentOpenClaw:
+		path := candidate.Parsed.Session.File.Path
+		_, _, sqliteMember := parser.ParseVirtualSourcePathForBase(path, "openclaw-agent.sqlite")
+		if sqliteMember || !parser.IsOpenClawSessionFile(filepath.Base(path)) || candidate.Session.FilePath == nil {
+			break
+		}
+		store := e.archiveStore
+		if store == nil {
+			store = e.db
+		}
+		stored, err := store.GetSessionFull(ctx, candidate.Session.ID)
+		if err != nil {
+			return ingest.HistoryResult{}, err
+		}
+		if stored != nil && stored.FilePath != nil &&
+			sameReconciliationSourcePath(*candidate.Session.FilePath, *stored.FilePath) &&
+			len(candidate.Messages) < stored.MessageCount {
+			// A shortened copy of the same legacy file is incomplete history.
+			// Different sources and SQLite members remain authoritative.
+			return ingest.HistoryResult{Action: ingest.HistoryPreserve}, nil
+		}
 	case parser.AgentRooCode, parser.AgentKiloLegacy, parser.AgentCline:
 		if len(candidate.Messages) > 0 {
 			break
