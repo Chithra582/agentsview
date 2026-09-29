@@ -6926,6 +6926,9 @@ components:
           type: boolean
         host:
           type: string
+        insight_default_agent:
+          description: Agent CLI used when an insight generation request does not choose one
+          type: string
         port:
           format: int64
           type: integer
@@ -6971,6 +6974,7 @@ components:
         - port
         - chart_palette
         - tool_result_images
+        - insight_default_agent
         - require_auth
         - read_only
       type: object
