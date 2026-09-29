@@ -99,9 +99,10 @@ func (f *lazyFTS) restore(ctx context.Context) error {
 
 // ImportClaudeAI reads a Claude.ai conversations.json export
 // and upserts each conversation into the store. Existing
-// sessions are updated (messages replaced); user-renamed
-// display names are preserved. Excluded (deleted) sessions
-// are counted as skipped.
+// sessions are updated (messages replaced) unless the export
+// has fewer messages than the archive, which is refused.
+// User-renamed display names are preserved. Excluded (deleted)
+// sessions are counted as skipped.
 func ImportClaudeAI(
 	ctx context.Context,
 	store db.Store,
@@ -200,6 +201,15 @@ func upsertConversation(
 		return importNew, fmt.Errorf("checking session: %w", err)
 	}
 	isNew := existing == nil
+	// A shorter export (for example an older archive or one with deleted
+	// turns) would make the replacement below drop stored messages.
+	// Refuse it before touching the session row.
+	if existing != nil && len(msgs) < existing.MessageCount {
+		return importNew, fmt.Errorf(
+			"export has %d messages, archive has %d",
+			len(msgs), existing.MessageCount,
+		)
+	}
 
 	sess := db.Session{
 		ID:               s.ID,
@@ -242,7 +252,10 @@ func upsertConversation(
 				return importNew,
 					fmt.Errorf("loading existing messages: %w", err)
 			}
-			if sameMessages(existingMsgs, msgs) {
+			// Compare in stored form: the write path sanitizes and
+			// projects rows, so raw parser output can differ from an
+			// unchanged archived copy.
+			if sameMessages(existingMsgs, storedFormMessages(store, msgs)) {
 				return importSkipped, nil
 			}
 		}
@@ -583,6 +596,17 @@ func ptrEqual(a, b *string) bool {
 		return false
 	}
 	return *a == *b
+}
+
+// storedFormMessages applies the validation and archive-content
+// projection the message write applies, without writing anything.
+func storedFormMessages(store db.Store, msgs []db.Message) []db.Message {
+	out := slices.Clone(msgs)
+	db.ValidateAndSanitize(nil, out, nil)
+	_, out = db.ProjectSessionForStoragePolicy(
+		db.Session{}, out, storeArchiveContent(store),
+	)
+	return out
 }
 
 func sameMessages(existing, incoming []db.Message) bool {

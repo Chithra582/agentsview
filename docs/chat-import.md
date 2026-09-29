@@ -132,7 +132,11 @@ messages, and analytics.
 You can safely re-import the same export file:
 
 - **Claude.ai** — existing sessions are updated with any
-  new messages. User-edited display names are preserved.
+  new messages. User-edited display names are preserved. An export
+  with fewer messages than the archived session (for example an older
+  export) is reported as an error and leaves the stored session unchanged.
+  Equal-length or longer exports can refresh earlier messages, including
+  attachment text; earlier turns do not have to match the archive.
 - **ChatGPT** — unchanged sessions are skipped. An export may append messages
   when every archived message still matches the beginning of the export.
   Shorter exports and exports that change archived history are reported as
