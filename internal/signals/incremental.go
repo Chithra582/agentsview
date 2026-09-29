@@ -30,7 +30,8 @@ const (
 	// makes the caller fall back to a full recompute.
 	// v3 added LastValidTokensOrdinal.
 	// v4 recognizes provider error and denied statuses in failure facts.
-	IncrementalStateCodecVersion = 4
+	// v5 uses normalized file paths and all supported JSON path keys for churn.
+	IncrementalStateCodecVersion = 5
 
 	// TrailingFactCount is the size of the trailing facts window. It must
 	// cover every window any delta can affect: a modified call in the last
@@ -104,7 +105,7 @@ type IncrementalState struct {
 	// counted latch. EditChurnCount itself lives on the sessions row.
 	EditLast map[string]EditChurnState `json:"edit_last,omitempty"`
 
-	// Runaway loop: RunawayHistorical latches hasRunawayToolWindow over
+	// Runaway loop: RunawayHistorical latches runawayToolWindowSpan over
 	// every 12-window that has fully left the mutable late-result region.
 	RunawayHistorical bool `json:"runaway_historical"`
 
@@ -250,7 +251,7 @@ func SeedIncrementalState(
 		if c.Category != "Edit" && c.Category != "Write" {
 			continue
 		}
-		path := extractFilePath(c.InputJSON)
+		path := c.filePath()
 		if path == "" {
 			continue
 		}
@@ -520,7 +521,7 @@ func (s *IncrementalState) FoldToolHealth(
 		if c.Category != "Edit" && c.Category != "Write" {
 			continue
 		}
-		path := extractFilePath(c.InputJSON)
+		path := c.filePath()
 		if path == "" {
 			continue
 		}
@@ -799,7 +800,7 @@ func windowAt(facts []ToolFact, windowStart, start int) bool {
 	return windowFactsQualify(facts[first : first+12])
 }
 
-// windowFactsQualify mirrors hasRunawayToolWindow's single-window test.
+// windowFactsQualify mirrors runawayToolWindowSpan's single-window test.
 func windowFactsQualify(facts []ToolFact) bool {
 	if len(facts) < 12 {
 		return false
