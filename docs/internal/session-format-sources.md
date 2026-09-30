@@ -891,9 +891,10 @@ fixtures retain this field; missing identities remain source-local.
   [`SessionWorkspacesGetWorkspaceResult`](https://github.com/github/copilot-sdk/blob/a2b2c18eb5a20417fc613eaaa93199f55ad22ea4/java/sdk/src/generated/java/com/github/copilot/generated/rpc/SessionWorkspacesGetWorkspaceResult.java)
   at `a2b2c18eb5a20417fc613eaaa93199f55ad22ea4` describes `user_named` as
   whether the user chose the name, and public `workspace.yaml` files show both
-  keys. No local Copilot session was available to check. Agentsview stores the
-  name as the session name when `user_named: true`; otherwise a generated name
-  keeps replacing the first user message.
+  keys. No local Copilot session was available to check. Agentsview uses the
+  name as the session name whether the user chose it or Copilot generated it.
+  The first message falls back to the name only when the session has no user
+  message.
 
 - **Store evidence:** Reverified 2026-09-10 against the published Copilot CLI
   1.0.83
@@ -977,6 +978,17 @@ fixtures retain this field; missing identities remain source-local.
   older records, rather than inferring coverage from normalized zero-valued
   keys. The provider-wire-preparation regression is
   `TestSandboxGeminiWirePreservesTokenCoverage`.
+- **Session names (2026-09-30):** `saveSummary` records a generated `summary` in
+  the recording's metadata, as a top-level JSON field or a
+  `{"$set":{"summary":...}}` JSONL record where the latest wins. Gemini CLI
+  has no rename command and lists a session under its summary, falling back to
+  the first user message. See
+  [chatRecordingService.ts](https://github.com/google-gemini/gemini-cli/blob/38700b4b38bf387dafded6c97c3f190d084b49e9/packages/core/src/services/chatRecordingService.ts)
+  and
+  [sessionUtils.ts](https://github.com/google-gemini/gemini-cli/blob/38700b4b38bf387dafded6c97c3f190d084b49e9/packages/cli/src/utils/sessionUtils.ts)
+  at `38700b4b38bf387dafded6c97c3f190d084b49e9`. No local Gemini session was
+  available to check. Agentsview uses the summary as the session name. The
+  first message falls back to it only when there is no user message.
 
 ## Gemini Apps (`gemini-apps`)
 
@@ -1338,6 +1350,17 @@ preservation of archived messages for OpenCode, Kilo, MiMoCode, and Icodemate.
   and
   [session.ts](https://github.com/anomalyco/opencode/blob/67caf894e0843ee370e72839e8265e483233479b/packages/opencode/src/session/session.ts).
   Channel database naming was reverified 2026-08-27 against `database.ts`.
+- **Session names (2026-09-30):** `session.title` holds both the name a user
+  sets in the TUI rename dialog and the title OpenCode generates while the
+  title is still a `New session - <ISO>` or `Child session - <ISO>`
+  placeholder; nothing marks which one it is. See
+  [dialog-session-rename.tsx](https://github.com/anomalyco/opencode/blob/2fa3363c924c5c3e367b84a87ae478296a0ed59b/packages/tui/src/component/dialog-session-rename.tsx)
+  and `ensureTitle` in
+  [prompt.ts](https://github.com/anomalyco/opencode/blob/2fa3363c924c5c3e367b84a87ae478296a0ed59b/packages/opencode/src/session/prompt.ts)
+  at `2fa3363c924c5c3e367b84a87ae478296a0ed59b`. Agentsview uses a
+  non-placeholder title as the session name. The first message is the first
+  user message and falls back to the title only when there is none. Kilo and
+  MiMo Code share this parser.
 - **Usage and cost:** Assistant messages persist input, output, cache-read, and
   cache-write tokens, plus model/provider identity. Agentsview computes price
   from those tokens rather than consuming a persisted USD total. Reverified
@@ -1910,6 +1933,13 @@ schemas keep their existing ordering behavior.
   `cacheCreationInputTokens`, and `cacheReadInputTokens` fields, corroborating
   the field names from outside this project. It is not Amp's own producer
   source.
+- **Session names (2026-09-30):** The thread document's top-level `title` is the
+  thread title. The [threads documentation](https://ampcode.com/docs/threads),
+  checked 2026-09-30, says Rename "replaces the title the agent chose" and
+  lists `amp threads rename`; it does not say whether a rename made elsewhere
+  reaches the local thread file. Agentsview uses `title` as the session name.
+  The first message is the first user message and falls back to the title only
+  when there is none.
 - **Agentsview:** `internal/parser/amp.go` and
   `internal/parser/amp_provider.go`.
 
@@ -1938,6 +1968,15 @@ schemas keep their existing ordering behavior.
   `result.metadata.toolCallRounds`. Each assistant message records the model
   that served its turn (`result.metadata.resolvedModel`, falling back to the
   request's prefixed `modelId`).
+- **Session names (2026-09-30):** The session's `customTitle` holds both a name
+  set with `/rename` and the title VS Code generates after the first request;
+  nothing marks which one it is. See `setSessionTitle` and
+  `generateInitialChatTitleIfNeeded` in
+  [chatServiceImpl.ts](https://github.com/microsoft/vscode/blob/dbe8e0c73259d428bc817f504a47fba232b95aa1/src/vs/workbench/contrib/chat/common/chatService/chatServiceImpl.ts)
+  at `dbe8e0c73259d428bc817f504a47fba232b95aa1`. Agentsview uses
+  `customTitle` as the session name. The first message falls back to it only
+  when the session has no user text. Positron and Windsurf share this
+  decoding.
 
 ## Windsurf (`windsurf`)
 
@@ -1960,7 +1999,8 @@ schemas keep their existing ordering behavior.
   monetary cost.
 - **Agentsview:** `internal/parser/windsurf_provider.go` and the shared VS
   Code-state helpers; database keys are reverse-engineered implementation
-  evidence.
+  evidence. A tab's `chatTitle` becomes the shared `customTitle` and so the
+  session name; whether Windsurf ever sets it from a user rename is unknown.
 
 ## Trae (`trae`)
 
@@ -2168,8 +2208,9 @@ schemas keep their existing ordering behavior.
   [sessionService.ts](https://github.com/QwenLM/qwen-code/blob/17a9c84dfbbc208e984cf82c4f9487bdefc7e83a/packages/core/src/services/sessionService.ts)
   and `readSessionTitleInfoFromFileSync` in
   [sessionStorageUtils.ts](https://github.com/QwenLM/qwen-code/blob/17a9c84dfbbc208e984cf82c4f9487bdefc7e83a/packages/core/src/utils/sessionStorageUtils.ts)
-  at `17a9c84dfbbc208e984cf82c4f9487bdefc7e83a`. Agentsview uses the last
-  record's `customTitle` as the session name unless its source is `auto`.
+  at `17a9c84dfbbc208e984cf82c4f9487bdefc7e83a`. Agentsview uses the latest
+  user title as the session name, else the latest generated title. The first
+  message falls back to that title only when the session has no user message.
   Managed sessions keep their title in a resource-store `session_metadata`
   record, which Agentsview does not read.
 - **Agentsview:** `internal/parser/qwen.go` and
@@ -2378,10 +2419,12 @@ schemas keep their existing ordering behavior.
   for `/name` and in
   [session-rename.ts](https://github.com/openclaw/openclaw/blob/03e179c755c987aaaf748a62a1d9dd90b8646642/ui/src/lib/session-rename.ts)
   for the web UI. Agentsview uses the node's label as the session name for
-  every window of that node and ignores `display_name`. A non-empty label is
-  part of the member digest, so a rename reparses that session; unlabeled
-  members keep their event-only digest. Databases without these tables have no
-  names. The legacy JSONL layout is not covered.
+  every window of that node, else its generated `display_name`. The first
+  message falls back to that title only when a session has no user message. A
+  non-empty title is part of the member digest, so a rename or new generated
+  title reparses that session; untitled members keep their event-only digest.
+  Databases without these tables have no titles. The legacy JSONL layout keeps
+  `label` in the `sessions.json` store, which Agentsview does not read.
 
 ## QClaw (`qclaw`)
 
@@ -2428,6 +2471,20 @@ schemas keep their existing ordering behavior.
 
 - **Agentsview:** `internal/parser/kimi.go` and
   `internal/parser/kimi_provider.go`.
+
+- **Session names (2026-09-30):** Kimi CLI keeps a session's title in
+  `custom_title` in the `state.json` beside `wire.jsonl`. `/title` (alias
+  `/rename`) sets it, and the title generator fills it while it is still null;
+  `title_generated` does not reliably tell the two apart. Sessions not opened
+  since that change still carry a `title` in `metadata.json`, where `Untitled`
+  is the placeholder. See `SessionState` and `_migrate_legacy_metadata` in
+  [session_state.py](https://github.com/MoonshotAI/kimi-cli/blob/9ab1286b8fe4e6bcd116949a27ce5e0ac3389c82/src/kimi_cli/session_state.py)
+  at `9ab1286b8fe4e6bcd116949a27ce5e0ac3389c82`. No local Kimi session was
+  available to check. Agentsview uses `custom_title`, else the legacy `title`,
+  as the session name, and watches both files so a rename resyncs the
+  transcript. The first message falls back to the title only when there is no
+  user text. The `.kimi-code` agents layout and Kimi Work have no known title
+  file.
 
 - **Archive projection (2026-09-04):** Rechecked `formatKimiToolUse` in
   `internal/parser/kimi.go`: its Glob header embeds the raw pattern. Copied
@@ -2552,7 +2609,10 @@ schemas keep their existing ordering behavior.
   recorded environment metadata as the fallback when the key is empty. Bulk
   and single-session parsing honor the caller's filesystem-discovery policy;
   `TestKiroProviderSQLiteProjectDiscoveryPolicy` verifies project names and
-  filesystem probes with discovery enabled and disabled.
+  filesystem probes with discovery enabled and disabled. Both the current
+  `session.json` and the legacy JSONL sidecar carry a `title`, which
+  Agentsview uses as the session name; the SQLite generation carries none. The
+  first message falls back to the title only when there is no user message.
 
 ## Kiro IDE (`kiro-ide`)
 
@@ -2778,7 +2838,8 @@ schemas keep their existing ordering behavior.
   Agentsview analytics for this provider.
 - **Agentsview:** `internal/parser/positron_provider.go` and the shared decoding
   in `internal/parser/vscode_copilot.go`; the lack of usage export is a parser
-  limitation, not proof that upstream never records metadata.
+  limitation, not proof that upstream never records metadata. Session names
+  follow the VS Code Copilot `customTitle` rule.
 
 ## Posit Assistant (`posit-assistant`)
 
