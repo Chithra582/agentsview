@@ -122,6 +122,21 @@ func (db *DB) ExportConversationChanges(ctx context.Context, opts ConversationEx
 			return result, fmt.Errorf("%w: invalid conversation position", ErrInvalidCursor)
 		}
 	}
+	// The first export pays for the projection instead of every sync write.
+	// Only writable handles (embedders and tests) build it here; the CLI reads
+	// read-only and builds through the writer owner on
+	// ErrConversationInitializationRequired.
+	if !db.readOnly {
+		var active bool
+		if err := db.getReader().QueryRowContext(ctx, `SELECT EXISTS(SELECT 1 FROM archive_metadata WHERE key=?)`, conversationExportInitializedKey).Scan(&active); err != nil {
+			return result, err
+		}
+		if !active {
+			if _, err := db.EnsureConversationExportInitialized(ctx); err != nil {
+				return result, err
+			}
+		}
+	}
 	tx, err := db.getReader().BeginTx(ctx, &sql.TxOptions{ReadOnly: true})
 	if err != nil {
 		return result, err
@@ -395,6 +410,31 @@ func reconcileConversationRangeTx(tx transactionQueries, sessionID string, msgs 
 		// the session gap covers activity without retained message records.
 		return clearUsageOnlyConversationTx(tx, sessionID)
 	}
+	active, err := conversationExportActiveTx(tx)
+	if err != nil {
+		return err
+	}
+	if active {
+		if err := projectConversationMessagesTx(tx, sessionID, msgs, replace, usageOnly, fromOrdinal); err != nil {
+			return err
+		}
+	}
+	if replace && !usageOnly {
+		var hadGap, deleted bool
+		if err := tx.QueryRow(`SELECT EXISTS(SELECT 1 FROM conversation_session_changes WHERE session_id=? AND gap='archive_content_excluded'),
+		 COALESCE((SELECT deleted_at IS NOT NULL FROM sessions WHERE id=?),1)`, sessionID, sessionID).Scan(&hadGap, &deleted); err != nil {
+			return err
+		}
+		if hadGap {
+			return putConversationSessionChangeTx(tx, sessionID, "", deleted)
+		}
+	}
+	return nil
+}
+
+// projectConversationMessagesTx writes the message rows of an active archive
+// at or after fromOrdinal.
+func projectConversationMessagesTx(tx transactionQueries, sessionID string, msgs []Message, replace, usageOnly bool, fromOrdinal int) error {
 	var incoming []conversationRow
 	counts := map[string]int{}
 	for _, msg := range msgs {
@@ -497,20 +537,7 @@ func reconcileConversationRangeTx(tx transactionQueries, sessionID string, msgs 
 			}
 		}
 	}
-	if err := putConversationRowsTx(tx, incoming, fresh); err != nil {
-		return err
-	}
-	if replace && !usageOnly {
-		var hadGap, deleted bool
-		if err := tx.QueryRow(`SELECT EXISTS(SELECT 1 FROM conversation_session_changes WHERE session_id=? AND gap='archive_content_excluded'),
-		 COALESCE((SELECT deleted_at IS NOT NULL FROM sessions WHERE id=?),1)`, sessionID, sessionID).Scan(&hadGap, &deleted); err != nil {
-			return err
-		}
-		if hadGap {
-			return putConversationSessionChangeTx(tx, sessionID, "", deleted)
-		}
-	}
-	return nil
+	return putConversationRowsTx(tx, incoming, fresh)
 }
 
 func conversationRowsEqual(a, b conversationRow) bool {
