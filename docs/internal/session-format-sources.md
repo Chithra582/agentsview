@@ -3402,37 +3402,54 @@ schemas keep their existing ordering behavior.
 ## Codebuff (`codebuff`)
 
 - **Format:** Per-session JSON files under
-  `<root>/<project>/chats/<timestamp>/`. Each session directory contains
-  `chat-messages.json` (JSON array of user/ai/error message objects with text,
-  tool, agent, mode-divider, plan, ask-user, and image blocks),
-  `run-state.json` (agent type, context token count, credits used, cwd, and
-  skill catalog), and optional `chat-meta.json` (message count, first prompt,
-  and messages size). Freebuff sessions share the same layout and are
-  distinguished by the `agentType` field containing `"free"`.
+  `<config-dir>/projects/<project>/chats/<timestamp>/`. The config directory
+  is `~/.config/manicode` unless `FREEBUFF_CONFIG_DIR` is set; the Codebuff
+  and Freebuff builds share this code, so the variable moves both.
+  `chat-messages.json` is a JSON array of user/ai/agent/error messages with
+  text, tool, agent, mode-divider, plan, ask-user (with answers), image,
+  sponsored-proposal, and agent-list blocks. Messages may also carry
+  `userError`, `validationErrors`, and image/text/file attachment lists.
+  `run-state.json` holds the agent type, context token count, credits used,
+  cwd, `fileContext.gitChanges.branch` (absent without git), and the skill
+  catalog. Optional `chat-meta.json` holds a message count and first prompt.
+  Freebuff sessions share the layout; their `agentType` contains `"free"`.
+- **Subagents:** an agent block's nested `blocks` use the same block union,
+  recursively. `agentId` is always set and unique within a transcript
+  (`cli/src/utils/sdk-event-handlers.ts`). Nested blocks carry no timestamps.
 - **Evidence:** `source`.
-- **Upstream:** Clone `https://github.com/CodebuffAI/codebuff.git` at
-  `b285b562b9ef3a3f35272ed32718eeb74dd86283`; see
-  [chat.ts](https://github.com/CodebuffAI/codebuff/blob/b285b562b9ef3a3f35272ed32718eeb74dd86283/cli/src/types/chat.ts)
-  for the `ChatMessage` and `ContentBlock` type definitions that define the
-  on-disk format, and
-  [session-state.ts](https://github.com/CodebuffAI/codebuff/blob/b285b562b9ef3a3f35272ed32718eeb74dd86283/common/src/types/session-state.ts)
-  for the `AgentState` type that defines `contextTokenCount` and
-  `creditsUsed`. Freebuff shares the same layout and is distinguished by the
-  `agentType` field in `run-state.json`.
-- **Usage and cost:** The `contextTokenCount` field in `run-state.json` provides
-  context window token counts (updated per API step). The `creditsUsed` and
-  `directCreditsUsed` fields provide session-level billing totals (1 credit =
-  $0.01). The `agentType` field records the agent template name (e.g.
-  `base2-deepseek`, `base2-free-mimo`), which encodes the model family but is
-  not the actual LLM model -- the real model is selected server-side and can
-  change mid-session; mid-session model switches are not detectable from the
-  on-disk format. Per-message token breakdown (input/output/cache) is not
-  available; only context window size and billing credits are persisted.
-  Freebuff (free tier) has no credits -- it is ad-supported with daily session
-  limits.
+- **Upstream:** Clone `https://github.com/CodebuffAI/freebuff.git` at
+  `ab18ec9d88d449e8766f9c25db52cf5c5ae3c869`, checked 2026-09-26. The
+  snapshot SHA is rewritten over time, so re-verify before quoting. See
+  [chat.ts](https://github.com/CodebuffAI/freebuff/blob/ab18ec9d88d449e8766f9c25db52cf5c5ae3c869/cli/src/types/chat.ts)
+  for `ChatMessage` and `ContentBlock`,
+  [session-state.ts](https://github.com/CodebuffAI/freebuff/blob/ab18ec9d88d449e8766f9c25db52cf5c5ae3c869/common/src/types/session-state.ts)
+  for `AgentState`,
+  [file.ts](https://github.com/CodebuffAI/freebuff/blob/ab18ec9d88d449e8766f9c25db52cf5c5ae3c869/common/src/util/file.ts)
+  for `ProjectFileContext`,
+  [run-state.ts](https://github.com/CodebuffAI/freebuff/blob/ab18ec9d88d449e8766f9c25db52cf5c5ae3c869/sdk/src/run-state.ts)
+  for `RunState`, and
+  [config-dir.ts](https://github.com/CodebuffAI/freebuff/blob/ab18ec9d88d449e8766f9c25db52cf5c5ae3c869/cli/src/utils/config-dir.ts)
+  for `FREEBUFF_CONFIG_DIR`.
+- **Usage and cost:** `creditsUsed` resets at each user prompt, so
+  `run-state.json` holds only the last prompt's spend. Each completed AI
+  message carries its prompt's `credits` and a `metadata.runState` snapshot.
+  1 credit = $0.01. BYOK runs record the model in
+  `metadata.runState.inference.model`; hosted runs record no model, and the
+  agent template (`agentType`, e.g. `base2-deepseek`) names only a model
+  family. `contextTokenBaseline.model` is a context anchor, not a billing
+  model. `contextTokenCount` is context occupancy, not billed tokens. No
+  per-message input/output/cache tokens are persisted. Freebuff has no
+  credits.
 - **Agentsview:** `internal/parser/codebuff.go` and
-  `internal/parser/codebuff_provider.go`; single-file provider with JSON array
-  parsing.
+  `internal/parser/codebuff_provider.go`. Each positive per-message `credits`
+  becomes a reported-cost event; transcripts without them fall back to
+  `creditsUsed`. Each nested agent block becomes a linked subagent session
+  that shares the transcript's source identity. Attachments are stored as
+  marker lines, never their paths or full pasted content; sponsored-proposal
+  payloads are not stored. The sidecar supplies a missing first prompt and,
+  for an empty transcript, the message count. Termination status is `tool_call_pending` or `clean`.
+  Watch events on `log.jsonl`, `trace.jsonl`, and `.tmp` siblings are
+  ignored.
 
 ## Evener (`evener`)
 

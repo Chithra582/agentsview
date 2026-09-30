@@ -715,19 +715,23 @@ This is the classification label used server-side to pick the per-step LLM; the
 literal LLM is not persisted by the CLI and is not visible in the UI. Project
 names are derived from the session's working directory via git-root detection.
 
-Codebuff and Freebuff sessions report cost only. The CLI's on-disk format does
-not persist per-message input/output/cache tokens, so the daily usage model
-breakdown shows the cost-attributed agent template (e.g. `base2-deepseek`,
-`base2-free-minimax-m3`) without per-message token figures. Reported-cost rows
-ride as microdollars on `money.Money` like every other agent, and per-model
-rates for `base2-*` templates are not in the embedded pricing tables, so cache
-savings for these rows resolve to zero by design rather than an aggregator bug.
+Codebuff and Freebuff sessions report cost only, as one reported-cost row per
+prompt. The CLI's on-disk format does not persist per-message input/output/cache
+tokens. A row is attributed to the model the turn ran when the session records
+one, such as a bring-your-own-key model, and otherwise to the agent template
+(e.g. `base2-deepseek`, `base2-free-minimax-m3`). Per-model rates for `base2-*`
+templates are not in the embedded pricing tables, so cache savings for these
+rows are zero.
 
-Freebuff does not have its own environment variable or config key — it shares
-the Codebuff provider for discovery and the parser auto-classifies sessions. Set
-`CODEBUFF_DIR` or `agents.codebuff.dirs` when manicode stores its projects
-directory somewhere other than `~/.config/manicode/projects`; this covers both
-Codebuff and Freebuff sessions.
+Each subagent a Codebuff or Freebuff session spawned is stored as its own
+session, linked to its parent. Attached images, pasted text, and files appear
+as labeled markers such as `[Image: ...]` and `[Text attachment: N chars]`.
+
+Freebuff has no config key of its own. It shares the Codebuff provider, and the
+parser classifies each session. Both CLIs move their config directory to
+`FREEBUFF_CONFIG_DIR` when it is set, and AgentsView then discovers sessions
+under `<FREEBUFF_CONFIG_DIR>/projects` instead of `~/.config/manicode/projects`.
+`CODEBUFF_DIR` or `agents.codebuff.dirs` take precedence over both.
 
 **OpenHands CLI shallow watch:** OpenHands stores each conversation in its own
 subdirectory, which would consume one recursive file watch per session and can
@@ -910,6 +914,7 @@ export OPENCLAUDE_PROJECTS_DIR=~/custom/openclaude/projects
 export OPENCLAUDE_CONFIG_DIR=~/custom/openclaude
 export COWORK_DIR=~/custom/cowork
 export CODEBUFF_DIR=~/custom/manicode/projects
+export FREEBUFF_CONFIG_DIR=~/custom/freebuff-config # re-roots the default projects/ path
 export CODEX_SESSIONS_DIR=~/custom/codex
 export CODEX_HOME=~/custom/codex-home # re-roots the default sessions/ paths
 export CLINE_DIR=~/custom/cline/data/sessions

@@ -1117,6 +1117,8 @@ var Registry = []AgentDef{
 		EnvVar:            "CODEBUFF_DIR",
 		ConfigKey:         "codebuff_dirs",
 		DefaultDirs:       []string{".config/manicode/projects"},
+		DefaultRootEnvVar: "FREEBUFF_CONFIG_DIR",
+		DefaultRootDir:    ".config/manicode",
 		IDPrefix:          "codebuff:",
 		FileBased:         true,
 		PeriodicReconcile: true,

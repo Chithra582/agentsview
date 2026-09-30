@@ -1707,3 +1707,21 @@ func TestResolveScriptPiDirectoryOverrides(t *testing.T) {
 		})
 	}
 }
+
+func TestResolveScriptHonorsFreebuffConfigDirRoot(t *testing.T) {
+	skipScriptPathEqualityOnWindows(t)
+	home := physTempDir(t)
+	root := filepath.Join(home, "freebuff-root")
+	require.NoError(t, os.MkdirAll(filepath.Join(root, "projects"), 0o755),
+		"mkdir projects")
+
+	out := runResolveScriptForTest(t,
+		"HOME="+home,
+		"FREEBUFF_CONFIG_DIR="+root,
+	)
+
+	dirs, _, _ := parseResolvedDirs(string(out))
+	assert.Contains(t, dirs[parser.AgentCodebuff], root+"/projects")
+	assert.NotContains(t, dirs[parser.AgentCodebuff],
+		home+"/.config/manicode/projects")
+}

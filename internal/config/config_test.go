@@ -3116,3 +3116,38 @@ func TestResolveDirs_EvenerPrecedence(t *testing.T) {
 		assert.True(t, cfg.IsUserConfigured(parser.AgentType("evener")))
 	})
 }
+
+func TestResolveDirs_CodebuffRootEnvVar(t *testing.T) {
+	t.Run("FREEBUFF_CONFIG_DIR re-roots the projects default", func(t *testing.T) {
+		dir := setupTestEnv(t)
+		setTestHome(t, canonicalTempDir(t))
+		root := filepath.Join(dir, "freebuff-root")
+		t.Setenv("CLAUDE_CONFIG_DIR", "")
+		t.Setenv("CODEX_HOME", "")
+		t.Setenv("CODEBUFF_DIR", "")
+		t.Setenv("FREEBUFF_CONFIG_DIR", root)
+		writeConfig(t, dir, map[string]any{})
+
+		cfg, err := LoadMinimal()
+		require.NoError(t, err)
+
+		assert.Equal(t, []string{filepath.Join(root, "projects")},
+			cfg.ResolveDirs(parser.AgentCodebuff))
+	})
+
+	t.Run("CODEBUFF_DIR wins over FREEBUFF_CONFIG_DIR", func(t *testing.T) {
+		dir := setupTestEnv(t)
+		setTestHome(t, canonicalTempDir(t))
+		t.Setenv("CLAUDE_CONFIG_DIR", "")
+		t.Setenv("CODEX_HOME", "")
+		t.Setenv("CODEBUFF_DIR", filepath.Join(dir, "override"))
+		t.Setenv("FREEBUFF_CONFIG_DIR", filepath.Join(dir, "freebuff-root"))
+		writeConfig(t, dir, map[string]any{})
+
+		cfg, err := LoadMinimal()
+		require.NoError(t, err)
+
+		assert.Equal(t, []string{filepath.Join(dir, "override")},
+			cfg.ResolveDirs(parser.AgentCodebuff))
+	})
+}

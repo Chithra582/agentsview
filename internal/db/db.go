@@ -531,7 +531,10 @@ CREATE INDEX IF NOT EXISTS idx_provider_freshness_updated_at
 // session labels now become session names, and a Copilot name the user chose no
 // longer replaces the first message. Re-parse unchanged sources so sessions
 // renamed before the upgrade show those names.)
-const dataVersion = 118
+// (119: Codebuff and Freebuff sessions gain git_branch, termination status,
+// per-prompt cost rows, attachment and ask-user content, and linked subagent
+// sessions. Re-parse unchanged Codebuff/Freebuff sources to backfill them.)
+const dataVersion = 119
 
 const tokenCoverageRepairStatsKey = "token_coverage_repair_v1"
 
