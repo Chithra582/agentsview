@@ -680,8 +680,24 @@ func TestParseWindowPoint(t *testing.T) {
 			want: time.Date(2026, 4, 1, 0, 0, 0, 0, time.UTC),
 		},
 		{
+			name: "RFC3339 UTC timestamp", in: "2026-04-01T12:30:00.123Z",
+			want: time.Date(2026, 4, 1, 12, 30, 0, 123000000, time.UTC),
+		},
+		{
+			name: "RFC3339 negative offset", in: "2026-04-01T00:00:00-05:00",
+			want: time.Date(2026, 4, 1, 5, 0, 0, 0, time.UTC),
+		},
+		{
+			name: "RFC3339 positive offset", in: "2026-04-01T00:00:00+09:30",
+			want: time.Date(2026, 3, 31, 14, 30, 0, 0, time.UTC),
+		},
+		{
 			name: "garbage is a hard error", in: "7x",
-			wantErrSubstring: "Nd, Nh, or YYYY-MM-DD",
+			wantErrSubstring: "expected Nd, Nh, YYYY-MM-DD, or RFC3339",
+		},
+		{
+			name: "timestamp requires a timezone", in: "2026-04-01T00:00:00",
+			wantErrSubstring: "expected Nd, Nh, YYYY-MM-DD, or RFC3339",
 		},
 	}
 	for _, tc := range tests {
@@ -696,6 +712,32 @@ func TestParseWindowPoint(t *testing.T) {
 			assert.True(t, got.Equal(tc.want), "got %v want %v", got, tc.want)
 		})
 	}
+}
+
+func TestGetSessionStats_WindowOffsets(t *testing.T) {
+	d := testDB(t)
+	for _, fixture := range []sessionFixture{
+		{id: "before", startedAt: "2026-03-08T04:59:59Z", userMsgs: 1},
+		{id: "start", startedAt: "2026-03-08T05:00:00Z", userMsgs: 2},
+		{id: "inside", startedAt: "2026-03-09T03:59:59Z", userMsgs: 9},
+		{id: "end", startedAt: "2026-03-09T04:00:00Z", userMsgs: 32},
+	} {
+		insertSessionFixture(t, d, fixture)
+	}
+
+	// Local midnights span 23 hours when daylight saving time starts.
+	stats, err := d.GetSessionStats(t.Context(), StatsFilter{
+		Since: "2026-03-08T00:00:00-05:00",
+		Until: "2026-03-09T00:00:00-04:00",
+	})
+	require.NoError(t, err)
+	assert.Equal(t, StatsWindow{
+		Since: "2026-03-08T05:00:00Z",
+		Until: "2026-03-09T04:00:00Z",
+		Days:  1,
+	}, stats.Window)
+	assert.Equal(t, 2, stats.Totals.SessionsAll)
+	assert.Equal(t, 11, stats.Totals.UserMessagesTotal)
 }
 
 func TestGetSessionStats_Distributions(t *testing.T) {
@@ -2649,13 +2691,7 @@ func statsCommitFile(
 	statsRunGit(t, repo, env, "commit", "-q", "-m", message)
 }
 
-var (
-	statsOutcomeRepoOnce sync.Once
-	statsOutcomeRepoDir  string
-	statsOutcomeRepoPath string
-)
-
-func statsOutcomeRepo(t *testing.T) string {
+func statsIsolateGit(t *testing.T) {
 	t.Helper()
 	// Keep fixture commands and outcome lookups independent of host Git state.
 	for _, entry := range os.Environ() {
@@ -2669,6 +2705,17 @@ func statsOutcomeRepo(t *testing.T) string {
 	require.NoError(t, os.WriteFile(globalConfig, nil, 0o600))
 	t.Setenv("GIT_CONFIG_GLOBAL", globalConfig)
 	t.Setenv("GIT_CONFIG_NOSYSTEM", "1")
+}
+
+var (
+	statsOutcomeRepoOnce sync.Once
+	statsOutcomeRepoDir  string
+	statsOutcomeRepoPath string
+)
+
+func statsOutcomeRepo(t *testing.T) string {
+	t.Helper()
+	statsIsolateGit(t)
 	statsOutcomeRepoOnce.Do(func() {
 		dir := filepath.Join(testDBFixtureTempDir, "stats-outcome")
 		require.NoError(t, os.MkdirAll(dir, 0o700), "create stats outcome repo dir")
@@ -2691,6 +2738,46 @@ func statsOutcomeRepo(t *testing.T) string {
 	})
 
 	return statsOutcomeRepoPath
+}
+
+func TestGetSessionStats_OutcomeStats_ExclusiveEnd(t *testing.T) {
+	skipIfNoGit(t)
+	statsIsolateGit(t)
+	repo := t.TempDir()
+	statsInitRepoAt(t, repo)
+	// The selected local day spans 23 hours across the spring DST change.
+	for _, stamp := range []string{
+		"2026-03-08T04:59:59Z", // before the selected day
+		"2026-03-08T05:00:00Z", // first included second
+		"2026-03-09T03:59:59Z", // last included second
+		"2026-03-09T04:00:00Z", // next midnight
+	} {
+		statsRunGit(t, repo, []string{
+			"GIT_AUTHOR_DATE=" + stamp, "GIT_COMMITTER_DATE=" + stamp,
+		}, "commit", "--allow-empty", "-q", "-m", "boundary fixture")
+	}
+	d := testDB(t)
+	insertSessionFixture(t, d, sessionFixture{
+		id: "boundary", agent: "claude", userMsgs: 5,
+		startedAt: "2026-03-08T12:00:00Z", cwd: repo,
+	})
+	for _, tc := range []struct {
+		until   string
+		commits int
+	}{
+		{"2026-03-09T00:00:00-04:00", 2},
+		{"2026-03-09T00:00:00.5-04:00", 3},
+	} {
+		t.Run(tc.until, func(t *testing.T) {
+			stats, err := d.GetSessionStats(t.Context(), StatsFilter{
+				Since: "2026-03-08T00:00:00-05:00", Until: tc.until,
+				IncludeGitOutcomes: true,
+			})
+			require.NoError(t, err)
+			require.NotNil(t, stats.OutcomeStats)
+			assert.Equal(t, tc.commits, stats.OutcomeStats.Commits)
+		})
+	}
 }
 
 // TestGetSessionStats_OutcomeStats_Happy seeds sessions whose cwd
@@ -2816,21 +2903,6 @@ func statsCanonPath(t *testing.T, path string) string {
 	return resolved
 }
 
-// statsFakeToolOnPath puts a shell script named tool at the front of PATH.
-// The test process's PATH is changed, so the caller must not run in parallel.
-func statsFakeToolOnPath(t *testing.T, tool, body string) {
-	t.Helper()
-	if runtime.GOOS == "windows" {
-		t.Skip("shell-script mock unsupported on windows")
-	}
-	dir := t.TempDir()
-	script := "#!/bin/sh\n" + body
-	require.NoError(t,
-		os.WriteFile(filepath.Join(dir, tool), []byte(script), 0o700),
-		"write fake %s", tool)
-	t.Setenv("PATH", dir+string(os.PathListSeparator)+os.Getenv("PATH"))
-}
-
 // TestOutcomeStatsNamesRepoWhoseGHLookupFailed pins that a pull-request
 // lookup which fails is reported rather than dropped. Before this, the
 // failure went to the daemon log and the response was an ordinary-looking
@@ -2838,11 +2910,12 @@ func statsFakeToolOnPath(t *testing.T, tool, body string) {
 // one missing an unknown number of repositories.
 func TestOutcomeStatsNamesRepoWhoseGHLookupFailed(t *testing.T) {
 	skipIfNoGit(t)
+	if _, err := exec.LookPath("gh"); err != nil {
+		t.Skipf("gh not available on PATH: %v", err)
+	}
+	t.Setenv("GH_REPO", "")
+	// This repository has no remotes, so gh fails before any network lookup.
 	repo := statsOutcomeRepo(t)
-	statsFakeToolOnPath(t, "gh", `
-echo "no git remotes found" >&2
-exit 1
-`)
 	d := testDB(t)
 	insertSessionFixture(t, d, sessionFixture{
 		id: "gh-failed", agent: "claude", userMsgs: 5,
@@ -2870,24 +2943,11 @@ exit 1
 // response has to say so.
 func TestOutcomeStatsNamesRepoWhoseGitLogFailed(t *testing.T) {
 	skipIfNoGit(t)
-	repo := statsOutcomeRepo(t)
-	realPath, err := exec.LookPath("git")
-	require.NoError(t, err, "locate real git")
-	// Pass every subcommand through to the real git except `log`, so the
-	// repository is still discovered and its author email still resolves.
-	statsFakeToolOnPath(t, "git", "REAL='"+strings.ReplaceAll(realPath, "'", "'\\''")+"'\n"+`
-for arg in "$@"; do
-  case "$arg" in
-    log)
-      echo "fatal: simulated git log failure" >&2
-      exit 128
-      ;;
-    -*) continue ;;
-    *) break ;;
-  esac
-done
-exec "$REAL" "$@"
-`)
+	repo := t.TempDir()
+	statsInitRepoAt(t, repo)
+	// This log-only setting fails on every platform while repository
+	// discovery and author lookup still work.
+	statsRunGit(t, repo, nil, "config", "log.showSignature", "invalid")
 	d := testDB(t)
 	insertSessionFixture(t, d, sessionFixture{
 		id: "log-failed", agent: "claude", userMsgs: 5,
@@ -2907,7 +2967,7 @@ exec "$REAL" "$@"
 		"the repository whose git log failed must be named")
 	assert.Equal(t, statsCanonPath(t, repo), out.Skipped[0].Repo, "Skipped[0].Repo")
 	assert.Equal(t, "log", out.Skipped[0].Op, "Skipped[0].Op")
-	assert.Contains(t, out.Skipped[0].Reason, "simulated git log failure",
+	assert.Contains(t, out.Skipped[0].Reason, "bad boolean config value",
 		"Skipped[0].Reason must carry why the lookup failed")
 }
 
