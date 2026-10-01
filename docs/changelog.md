@@ -88,6 +88,9 @@ The latest published release is
 
 **Improvements**
 
+- On Windows, each watched folder reserves 16 KiB for change notifications
+  instead of 64 KiB. At the 8192-folder budget, that reduces buffer capacity
+  from 512 MiB to 128 MiB.
 - Semantic search embedding requests now go through the shared Kenn embedding
   client. Existing indexes keep working without re-embedding. Behavior that
   changes:
