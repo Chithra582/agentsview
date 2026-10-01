@@ -1422,6 +1422,12 @@ type ParsedSession struct {
 	// linear-bound sessions. Only set by the Claude parser; nil for
 	// all other agents.
 	ClaudeLinearParse *bool
+	// ClaudeSubagentSources records the files that contributed to this full
+	// parse. Sync keeps this local provenance with the archived messages.
+	ClaudeSubagentSources []string
+	// claudeRenameSeen preserves explicit title precedence when combining
+	// transcripts, including a /rename command that cleared the title.
+	claudeRenameSeen bool
 
 	TotalOutputTokens    int
 	PeakContextTokens    int
