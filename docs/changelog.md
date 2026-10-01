@@ -1,5 +1,5 @@
 ---
-last_edited: 2026-09-30
+last_edited: 2026-10-01
 title: Changelog
 description: Release history for AgentsView
 ---
@@ -168,6 +168,10 @@ The latest published release is
 
 **Bug fixes**
 
+- Sync continues importing local sessions and reachable remotes when another
+  remote's hostname cannot resolve, such as while disconnected from a private
+  network. This also applies during archive upgrades and full rebuilds, which
+  preserve the unavailable host's archived sessions.
 - Re-importing a ChatGPT export now fills in code-run output that was still
   missing when an earlier export was archived. The archived message keeps its
   place and any pin. Re-importing a conversation you trashed now skips it
