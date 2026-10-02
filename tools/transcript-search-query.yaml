@@ -1,0 +1,19 @@
+name: transcript-search-query
+description: Queries archived agent sessions using full-text search, regex, model filters, and date constraints.
+input_schema:
+  type: object
+  properties:
+    query_text:
+      type: string
+      description: Search query keyword, phrase, or SQLite FTS5 pattern.
+    model_filter:
+      type: string
+      description: Filter results to specific LLM models (e.g. claude-3-5-sonnet, gpt-4o).
+    tool_filter:
+      type: string
+      description: Filter turns by invoked tool name (e.g. bash, edit_file).
+    limit:
+      type: integer
+      description: Maximum number of session records to return (default 25).
+  required:
+    - query_text

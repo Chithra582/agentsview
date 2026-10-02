@@ -1,0 +1,23 @@
+name: session-archive-syncer
+description: Discovers, ingests, and normalizes agent transcript files from local or remote directories into the archive database.
+input_schema:
+  type: object
+  properties:
+    source_dir:
+      type: string
+      description: Directory path containing raw agent session files (e.g. ~/.claude/projects).
+    agent_format:
+      type: string
+      enum:
+        - claude_code
+        - cursor
+        - devin
+        - aider
+        - generic_jsonl
+      description: Format schema of the transcript files.
+    force_resync:
+      type: boolean
+      description: Force full re-parse of existing session records.
+  required:
+    - source_dir
+    - agent_format

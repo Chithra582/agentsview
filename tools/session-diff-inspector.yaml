@@ -1,0 +1,16 @@
+name: session-diff-inspector
+description: Extracts and formats git patches, tool outputs, and modified file changes associated with a specific agent session.
+input_schema:
+  type: object
+  properties:
+    session_id:
+      type: string
+      description: Unique identifier of the archived agent session.
+    include_tool_outputs:
+      type: boolean
+      description: Whether to include stdout/stderr logs from executed tools.
+    file_path_pattern:
+      type: string
+      description: Optional glob pattern to filter diffs to specific filenames.
+  required:
+    - session_id

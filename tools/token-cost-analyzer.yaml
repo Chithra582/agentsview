@@ -1,0 +1,21 @@
+name: token-cost-analyzer
+description: Computes aggregate token usage, cache efficiency, and financial spend across models and projects.
+input_schema:
+  type: object
+  properties:
+    group_by:
+      type: string
+      enum:
+        - model
+        - project
+        - day
+        - agent
+      description: Dimension to aggregate metrics across.
+    start_date:
+      type: string
+      description: ISO 8601 start timestamp for metric calculation.
+    end_date:
+      type: string
+      description: ISO 8601 end timestamp for metric calculation.
+  required:
+    - group_by
