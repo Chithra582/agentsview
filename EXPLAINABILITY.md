@@ -1,8 +1,8 @@
 # EXPLAINABILITY.md
 
-This document explains the internal mechanisms, data lineage, operational boundaries, and governance framework of **# Explainability & Decision Transparency Report** (`agentsview`) in accordance with the **OpenGAP v0.1.0** specification for the **HiDevs GitAgent Passport** clearance pipeline.
+This document explains the internal mechanisms, data lineage, operational boundaries, and governance framework of **AgentsView** (`agentsview`) in accordance with the **OpenGAP v0.1.0** specification for the **HiDevs GitAgent Passport** clearance pipeline.
 
-> **Agent Name:** # Explainability & Decision Transparency Report (`agentsview`)  
+> **Agent Name:** AgentsView (`agentsview`)  
 > **Specification:** OpenGAP v0.1.0  
 > **Category / Domain:** Developer Tools / AI Coding Agent Observability & Transcript Search  
 > **Compliance Standard:** OpenGAP Checkpoint 2 (Explainability & Decision Governance), OWASP LLM Top 10, MITRE ATLAS  
@@ -11,7 +11,7 @@ This document explains the internal mechanisms, data lineage, operational bounda
 
 ## How the Agent Decides
 
-# Explainability & Decision Transparency Report operates via a deterministic five-stage operational pipeline.
+The observability engine processes agent transcripts through a deterministic 5-stage pipeline ensuring data fidelity, indexing speed, and strict local privacy.
 
 ### 1. Decision Architecture
 
@@ -52,7 +52,6 @@ The runtime intake, state classification, evaluation, and execution tracking ope
 
 ### 2. Decision Logic & Routing Formulations
 
-Scoring
 Session search relevance across document turns $d \in D$ for a search query $q$ is computed via a tuned BM25 formulation with recency weighting:
 
 $$S_{\text{search}}(d, q) = \text{BM25}(d, q) \cdot \left(1 + \beta \cdot e^{-\lambda \cdot \Delta t}\right)$$
@@ -68,29 +67,31 @@ $$C_{\text{session}} = \sum_{i=1}^{N} \left( T_{\text{in}}^{(i)} \cdot P_{\text{
 
 ### 3. Thresholding & Refusal Decision Criteria
 
-# Explainability & Decision Transparency Report enforces strict operational boundaries and deterministic refusal thresholds:
-- **Refusal on ERR_CORRUPT_TRANSCRIPT_SYNTAX**: **Transcript Integrity** halts execution with code `ERR_CORRUPT_TRANSCRIPT_SYNTAX`.
-- **Refusal on ERR_QUERY_EXECUTION_TIMEOUT**: **Search Query Latency** halts execution with code `ERR_QUERY_EXECUTION_TIMEOUT`.
-- **Refusal on ERR_UNREDACTED_SECRET_LEAK**: **Secret Detection** halts execution with code `ERR_UNREDACTED_SECRET_LEAK`.
-- **Refusal on ERR_STORAGE_QUOTA_EXCEEDED**: **Local Disk Budget** halts execution with code `ERR_STORAGE_QUOTA_EXCEEDED`.
-- **Refusal on ERR_UNSUPPORTED_AGENT_SCHEMA**: **Unknown Agent Format** halts execution with code `ERR_UNSUPPORTED_AGENT_SCHEMA`.
+AgentsView enforces strict operational boundaries and deterministic refusal thresholds:
+- **Refusal on ERR_CORRUPT_TRANSCRIPT_SYNTAX**: Transcript Integrity (Malformed JSONL structure) halts execution with code `ERR_CORRUPT_TRANSCRIPT_SYNTAX`.
+- **Refusal on ERR_QUERY_EXECUTION_TIMEOUT**: Search Query Latency (Execution time > 10.0 s) halts execution with code `ERR_QUERY_EXECUTION_TIMEOUT`.
+- **Refusal on ERR_UNREDACTED_SECRET_LEAK**: Secret Detection (High-entropy secret pattern detected) halts execution with code `ERR_UNREDACTED_SECRET_LEAK`.
+- **Refusal on ERR_STORAGE_QUOTA_EXCEEDED**: Local Disk Budget (Archive size > 50 GB) halts execution with code `ERR_STORAGE_QUOTA_EXCEEDED`.
+- **Refusal on ERR_UNSUPPORTED_AGENT_SCHEMA**: Unknown Agent Format (Unrecognized header schema) halts execution with code `ERR_UNSUPPORTED_AGENT_SCHEMA`.
 
 ### 4. Fallback Decision Mechanism
 
 Continuous operational stability is maintained through layered fault recovery:
+- **Tier 1 (Automated Transcript Recovery)**: If a corrupted JSONL entry is encountered during realtime synchronization, the parser isolates the offending byte offset and continues ingesting downstream healthy records.
+- **Tier 2 (Database Engine Fallback)**: If DuckDB is locked by a heavy analytics query, search operations fall back transparently to SQLite FTS5 for instant retrieval.
+- **Tier 3 (User Quarantine & Audit Mode)**: Detected unredacted credentials or unmapped custom agent schemas halt indexing of the affected session, alerting the developer via the web UI for manual resolution.
 - **Model Fallback Cascade**: High-level reasoning and synthesis default to `gemini-2.0-flash` with automatic failover to `gpt-4o` and `claude-3-5-sonnet`.
 
 ### 5. Human-in-the-Loop Governance
 
 Human operators retain sovereign authority over the multi-agent execution lifecycle:
-- **Consequential Action Sign-Off**: Sensitive and consequential actions require operator sign-off.
-- **Offline Ledger Auditing**: Operators can verify execution records and state transitions offline.
+- **Benchmark Trajectory Auditing**: Operators inspect evaluation traces, raw generation tokens, and container logs to verify scoring fidelity.
 
 ---
 
 ## The Data It Uses
 
-# Explainability & Decision Transparency Report operates under strict principles of data minimization, environment isolation, and privacy protection.
+AgentsView operates under strict principles of data minimization, environment isolation, and privacy protection.
 
 ### 1. Ingested Input Data
 
@@ -101,7 +102,9 @@ The framework processes only operational data necessary to perform its functions
 
 ### 2. Configuration & Reference Data
 
-- **Configuration Schemas**: Declarative system policy files.
+- **Model Context Protocol (MCP)**: JSON-RPC 2.0 schema for agentic tool and prompt exposure.
+- **SQLite FTS5 Standard**: Full-text search indexing with BM25 ranking algorithm.
+- **OpenTelemetry Semantic Conventions**: Tracing and metric attributes for GenAI operations.
 
 ### 3. Base Model & Inference Lineage
 
@@ -119,7 +122,7 @@ The framework processes only operational data necessary to perform its functions
 
 ## Limitations
 
-Understanding the operational boundaries and technical constraints of # Explainability & Decision Transparency Report is essential for effective deployment.
+Understanding the operational boundaries and technical constraints of AgentsView is essential for effective deployment.
 
 ### 1. Large Transcript File Parsing Latency on Massive Projects
 - **Limitation**: Ingesting giant multi-megabyte monolithic transcript files can cause temporary CPU spikes.
